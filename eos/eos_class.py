@@ -184,8 +184,8 @@ class EOS_Spectral3_match(EOS_interpolation):
         trial_shape=gamma12_trial.shape[1:]
         e_trial=np.linspace(0.16*(939-16+28),0.16*(939-16+38),trial_shape[0])
         p_trial=np.linspace((0.16*5./3),(0.16*200./3),trial_shape[1])
-        gamma1_trial = interpolate.interp2d(e_trial, p_trial, gamma12_trial[:,:,0].transpose(), kind='cubic')
-        gamma2_trial = interpolate.interp2d(e_trial, p_trial, gamma12_trial[:,:,1].transpose(), kind='cubic')
+        gamma1_trial = interpolate.interp2d(e_trial, p_trial, gamma12_trial[0,:,:].transpose(), kind='cubic')
+        gamma2_trial = interpolate.interp2d(e_trial, p_trial, gamma12_trial[1,:,:].transpose(), kind='cubic')
     except:
         print('EOS_Spectral3_match EOS CLASS in eos_class.py not initialized.')
         print('Need to run spectral3_match_gamma1gamma2_trial.py first.')
