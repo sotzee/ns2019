@@ -20,6 +20,7 @@ def quality_control_basic(eos_array):
     success_baryondensity_range=eos_array[0,-1]>0.3
     success_pressure_range=eos_array[2,0]<1e-8 and eos_array[2,-1]>200
     success_eos=success_causality and success_stiff_enough and success_baryondensity_range and success_pressure_range
+    #print(success_causality , success_stiff_enough , success_baryondensity_range , success_pressure_range)
     return success_eos,eos_array
 # =============================================================================
 # from scipy.interpolate import interp1d
@@ -210,6 +211,9 @@ class EOS_Spectral3_match(EOS_interpolation):
         return np.exp(x)/(self.Gamma(x,gammas)*self.baryon_ratio(x,gammas))
     def density(self,x):
         return self.baryon_ratio(x,self.gammas)*(self.density_0+self.pressure_0*scipy.integrate.quad(self.to_integerate,0,x,args=self.gammas)[0])
+    def cs2(self,x):
+        p=np.exp(x)*self.pressure_0
+        return p*self.Gamma(x,self.gammas)/(self.density(x)+p)
     def __init__(self,eos_array_high,eos_low):
         self.baryon_density_0=0.06
         self.pressure_0=eos_low.eosPressure_frombaryon(self.baryon_density_0)
@@ -227,11 +231,14 @@ class EOS_Spectral3_match(EOS_interpolation):
         dp_above_p1 = eos_array_high[2,1] - eos_array_high[2,0]
         p_array_match=log_array([self.pressure_0,self.pressure_1],dp_above_p1/dp_below_p0,10)[2]
         eos_array_match=[]
+        cs2_array_match=[]
         for p_i in p_array_match:
             eos_array_match.append([self.baryon_density_0*self.baryon_ratio(np.log(p_i/self.pressure_0),self.gammas),
                                   self.density(np.log(p_i/self.pressure_0)),
                                   p_i])
+            cs2_array_match.append(self.cs2(np.log(p_i/self.pressure_0)))
         eos_array_match=np.array(eos_array_match).transpose()
+        self.causal_match=np.array(cs2_array_match).max()<=1
         self.eos_array=np.concatenate((eos_array_low,eos_array_match[:,:-1],eos_array_high),axis=1)
         EOS_interpolation.__init__(self,self.baryon_density_0,self.eos_array)
     def __getstate__(self):

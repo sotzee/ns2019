@@ -10,10 +10,7 @@ import numpy as np
 from unitconvert import toMevfm,toMev4
 from solver_equations import solve_equations,explore_solutions,Calculation_unparallel
 from Parallel_process import main_parallel,main_parallel_unsave
-from scipy.misc import derivative
-import scipy.constants as const
-from scipy.interpolate import interp1d
-import pickle
+from eos_class import EOS_Spectral3_match,EOS_SLY4
 
 def equations(x,args,args_extra):
     m_eff,J,L,self_W=args
@@ -37,7 +34,7 @@ def equations(x,args,args_extra):
     eq6=m**3*(tmp_J_0*(1+(m_eff**2-3*baryon_density_sat*E_F*tmp_1)/E_F**2)+3*tmp_J_1*(1-32*tmp_2*W_0*Lambda*tmp_J_1)-L)
     return eq1,eq2,eq3,eq4,eq5,eq6
 
-def logic_sol(sol_x,init_i,args):
+def logic_sol(sol_x,init_i,args,other_args):
     return sol_x[:3].min()>0 and sol_x[2].max()<250 #this 250 is tuned in order to make PNM energy density stay in range. using 1000 with make Max(PNM energy density) go to 
 
 def eos_J_L_around_sym(baryon_density_sat,bd_energy,incompressibility,_args):
@@ -78,7 +75,7 @@ def equations_PNM(x,eos_args,args_extra):
     eq3=m*((m_W)**2*W_0/g2_W + (self_W/6)*W_0**3 + 2*Lambda*W_0*rho_0**2 - n)
     return eq2,eq3
 
-def logic_sol_PNM(sol_x,init_i,args):
+def logic_sol_PNM(sol_x,init_i,args,other_args):
     return sol_x[1]>0 and sol_x[0]<m  and np.abs(sol_x[1]-init_i[1])/init_i[1]<0.10
 
 def pressure_density_PNM(PNM_args,eos_args,extra_args):
@@ -133,7 +130,7 @@ def eos_equations(y,eos_args,equations_extra_args):
     eq6=chempo_e+chempo_p-chempo_n
     return eq2,eq3,eq6
 
-def eos_logic_sol(sol_x,init_i,args):
+def eos_logic_sol(sol_x,init_i,args,other_args):
     return sol_x[1]>0 and sol_x[0]<m and sol_x[2]**3/(3*np.pi**2)<args[0] #and (np.abs(sol_x-init_i)/init_i).max()<0.1 # and np.abs((sol_x-init_i)/init_i).max()<0.1
 
 def Calculation_parallel_sub(args_i,other_args):
@@ -169,8 +166,13 @@ def eos_pressure_density(eos_array_args,eos_args_with_baryon,mass_args):
     pressure=chempo_e*n_e+chempo_p*n_p+chempo_n*n_n-energy_density
     return toMevfm(np.array([n,energy_density,pressure]),'mev4')
 
-dir_name='RMF'
+
+dir_name='FSU2'
+dir_prp='prp'
 path='../'
+from toolbox import ensure_dir,pickle_dump
+ensure_dir(path,dir_name)
+ensure_dir(path+dir_name+'/',dir_prp)
 
 baryon_density_s=0.16
 m=939
@@ -180,24 +182,25 @@ mass_args=(0.5109989461,939,550,783,763)
 baryon_density_s_MeV4=toMev4(baryon_density_s,'mevfm')
 equations_extra_args=(baryon_density_s_MeV4,m-BindE,K,mass_args)
 
-args=np.mgrid[0.5*939:0.8*939:16j,30:36:4j,0:120:13j,0:0.03:4j]
+#args=np.mgrid[0.5*939:0.8*939:16j,30:36:4j,0:120:13j,0:0.03:4j]
+args=np.mgrid[0.5*939:0.8*939:31j,30:36:13j,0:120:49j,0:0.03:7j]
 args_flat=args.reshape((-1,np.prod(np.shape(args)[1:]))).transpose()
-
-J,m_eff,self_W,L=args
-args_shape=np.shape(m_eff)
+args_shape=np.shape(args[0])
+#m_eff,J,L,self_W=args
 
 init_args= (90.,90.,90.,0.001,0.001,0.)
-init_index=tuple(np.array(args_shape)/2)
+init_index=tuple((np.array(args_shape)/2).astype(int))
 eos_args_logic,eos_args=explore_solutions(equations,args,(init_index,),(init_args,),vary_list=np.array([1.]),tol=1e-12,logic_success_f=logic_sol,Calculation_routing=Calculation_unparallel,equations_extra_args=equations_extra_args)
 eos_args=np.concatenate((eos_args,args[[3]]))
 eos_args_flat=eos_args.reshape((-1,np.prod(args_shape))).transpose()
 eos_args_logic_flat=eos_args_logic.astype(bool).flatten()
 
-#for checking symmetric and pure neutron matter properities.
-f_J_L_around_sym='./'+dir_name+'/RMF_J_L_around_sym.dat'
-error_log=path+dir_name+'/error.log'
+#for checking symmetric matter properities.
+f_J_L_around_sym=path+dir_name+'/'+dir_prp+'/FSU2_J_L_around_sym.dat'
+error_log=path+dir_name+'/'+dir_prp+'/error.log'
 J_L_around_sym=main_parallel(Calculation_J_L_around_sym,np.concatenate((eos_args_flat,args_flat),axis=1)[eos_args_logic_flat],f_J_L_around_sym,error_log)
 
+#for checking pure neutron matter properities.
 init_index=(0,-1,-1,0)
 init_args=(args[0][init_index],384.5)
 equations_PNM_extra_args=(baryon_density_s_MeV4,mass_args)
@@ -212,14 +215,39 @@ eos_args_with_baryon=np.tile(eos_args,np.concatenate(([N],np.full(len(args_shape
 eos_args_with_baryon=np.concatenate((baryon_density,eos_args_with_baryon))
 
 #init_index=tuple(np.array(args_shape)/2)
-init_index=tuple(np.array(args_shape)/2)
+init_index=tuple((np.array(args_shape)/2).astype(int))
 init_args=(PNM_args[0][init_index],PNM_args[1][init_index],((3*np.pi**2)*baryon_density_s_MeV4)**0.33)
 init_index=(0,)+init_index
 eos_equations_extra_args=mass_args
 eos_array_logic_,eos_array_args=explore_solutions(eos_equations,eos_args_with_baryon,(init_index,),(init_args,),vary_list=np.array([1.]),tol=1e-12,logic_success_f=eos_logic_sol,Calculation_routing=Calculation_parallel,equations_extra_args=eos_equations_extra_args)
 eos_check_discontinuity=np.logical_or((np.abs((eos_array_args[:,1:]-eos_array_args[:,:-1])/eos_array_args[:,:-1]))<0.1,eos_array_args[:,1:]==0).min(axis=(0,1))
 eos_array_logic=np.logical_and(PNM_saturation_logic,eos_check_discontinuity)
-eos_array=eos_pressure_density(eos_array_args,eos_args_with_baryon,mass_args)#.reshape((3,N,-1)).transpose((2,1,0))
+eos_array_list=eos_pressure_density(eos_array_args,eos_args_with_baryon,mass_args)#.reshape((3,N,-1)).transpose((2,1,0))
+eos_array_list_success=eos_array_list[:,:,eos_array_logic].transpose((2,0,1))
+
+pickle_dump(path+dir_name+'/',dir_prp,([eos_args_logic,'eos_args_logic'],[eos_args,'eos_args'],[PNM_saturation,'PNM_saturation'],[eos_array_logic,'eos_array_logic'],[eos_array_list,'eos_array_list']))
+
+def Calculation_creat_EOS(eos_args_args_array,other):
+    return EOS_Spectral3_match(eos_args_args_array,other)
+eos_success=main_parallel_unsave(Calculation_creat_EOS,eos_array_list_success,other_args=EOS_SLY4())
+
+causal_match=[]
+p_185_success=[]
+for i in range(len(eos_success)):
+    causal_match.append(eos_success[i].causal_match)
+    p_185_success.append(eos_success[i].eosPressure_frombaryon(0.16*1.85))
+logic_success_causal_match=np.copy(eos_array_logic)
+logic_success_causal_match[eos_array_logic]=causal_match
+p_185=np.zeros(args_shape)
+p_185[eos_array_logic]=p_185_success
+
+eos_success=eos_success[logic_success_causal_match[eos_array_logic]]
+logic_success_eos=logic_success_causal_match
+
+pickle_dump(path,dir_name,([eos_success,'eos_success'],[args,'args'],[logic_success_eos,'logic_success_eos'],[p_185,'p185']))
+
+#eos=eos_flat.reshape(eos_shape)
+
 
 # =============================================================================
 # f_eos_RMF='./'+dir_name+'/RMF_eos.dat'
