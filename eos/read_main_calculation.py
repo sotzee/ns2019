@@ -22,8 +22,15 @@ from toolbox import pickle_load,pickle_dump
 # need_intepolation=False
 # =============================================================================
 
-dir_name='PiecewisePoly3'
-from eos_class import EOS_PiecewisePoly3WithCrust
+# =============================================================================
+# dir_name='PiecewisePoly3'
+# from eos_class import EOS_PiecewisePoly3WithCrust
+# path='../'
+# need_intepolation=False
+# =============================================================================
+
+dir_name='FSU2'
+from eos_class import EOS_Spectral3_match
 path='../'
 need_intepolation=False
 

@@ -197,10 +197,33 @@ class EOS_Spectral3_match(EOS_interpolation):
         gammas=[float(gamma0),float(gamma1),float(gamma2)]
         baryon_ratio1=self.baryon_ratio(x1,gammas)
         density1=baryon_ratio1*(e0+p0*scipy.integrate.quad(self.to_integerate,0,x1,args=gammas)[0])
-        return n0*baryon_ratio1-n1, density1-e1
+        return n0*baryon_ratio1/n1-1, density1/e1-1
     def Spectral3_match(self,args):
         gamma0,n0,e0,p0,n1,e1,p1=args
         return opt.root(self.equations,np.array([self.gamma1_trial(e1,p1),self.gamma2_trial(e1,p1)]),tol=1e-8,args=(args,))
+    def Spectral3_match_after_initial_fail(self,args):  #this is to deal with the solutions when gamma2 close to zero, trial value is usual too small, so that the erf() is not working properly.
+        gamma0,n0,e0,p0,n1,e1,p1=args                   #I go around the problem by  increase the trial value to 1e-4, and try multiply initial trial value to get the best sulution.
+        init_list=([self.gamma1_trial(e1,p1)[0],self.gamma2_trial(e1,p1)[0]],)
+        if(np.abs(self.gamma2_trial(e1,p1)[0])<1e-4):
+            init_list+=([self.gamma1_trial(e1,p1)[0],1.e-4],)
+        if(np.abs(self.gamma2_trial(e1,p1)[0]).max()>10):
+            init_list+=([60.,-50.],)
+        vary_list=np.array([1,0.5,-0.5,-1])
+        shape_init=np.array(init_list).shape
+        init_vary_list=np.multiply(init_list,np.tile(np.array(np.meshgrid(*([vary_list]*shape_init[1]))), (shape_init[0],)+(1,)*(shape_init[1]+1)).transpose(list(range(2,shape_init[1]+2))+list(range(2)))).reshape((len(vary_list)**shape_init[1]*shape_init[0],shape_init[1]))
+        sol_x=[]
+        sol_f=[]
+        for init_i in init_vary_list:
+            sol = opt.root(self.equations,init_i,tol=1e-8,args=(args,),method='hybr')
+            sol_x.append(sol.x)
+            sol_f.append(sol.fun)
+            #print(init_i,sol.x,sol.fun)
+            if(np.max(np.abs(sol.fun))<1e-4):
+                return True,list(sol.x)
+        #sol_x=np.array(sol_x)
+        #sol_f_max=np.array(sol_f).max(axis=1)
+        return False,[1.,-0.1]
+
     def Gamma(self,x,gammas):
         return np.exp((np.array(gammas)*np.array([x**0,x,x**2])).sum(axis=0))
     def baryon_ratio(self,x,gammas): #\int_{0}^x\frac{dx'}{\Gamma(x')}
@@ -214,7 +237,7 @@ class EOS_Spectral3_match(EOS_interpolation):
     def cs2(self,x):
         p=np.exp(x)*self.pressure_0
         return p*self.Gamma(x,self.gammas)/(self.density(x)+p)
-    def __init__(self,eos_array_high,eos_low):
+    def __init__(self,eos_array_high,eos_low,s_k=[0,1]):
         self.baryon_density_0=0.06
         self.pressure_0=eos_low.eosPressure_frombaryon(self.baryon_density_0)
         self.density_0=eos_low.eosDensity(self.pressure_0)
@@ -223,24 +246,39 @@ class EOS_Spectral3_match(EOS_interpolation):
         self.baryon_density_1,self.density_1,self.pressure_1=eos_array_high[:,0]
         self.match_args=[gamma0,self.baryon_density_0,self.density_0,self.pressure_0,
                         self.baryon_density_1,self.density_1,self.pressure_1]
+        #print('begin matching...')
         match_result=self.Spectral3_match(self.match_args)
+        #print('finish matching...')
         self.gammas=[float(gamma0),float(match_result.x[0]),float(match_result.x[1])]
-        self.success_match=np.max(np.array(self.equations(self.gammas[1:],self.match_args))/np.array(self.baryon_density_0,self.pressure_1))<1e-4
+        self.success_match=np.abs(np.array(self.equations(self.gammas[1:],self.match_args))).max()<1e-4
+        #print(self.equations(self.gammas[1:],self.match_args))
+        if(self.success_match):
+            pass
+        else:
+            self.success_match,gamma12=self.Spectral3_match_after_initial_fail(self.match_args)
+            self.gammas=[float(gamma0),float(gamma12[0]),float(gamma12[1])]
+            #print(self.equations(self.gammas[1:],self.match_args))
         eos_array_low=eos_low.eos_array[:,eos_low.eos_array[0]<self.baryon_density_0]
-        dp_below_p0 = eos_array_low[2,-1] - eos_array_low[2,-2]
-        dp_above_p1 = eos_array_high[2,1] - eos_array_high[2,0]
-        p_array_match=log_array([self.pressure_0,self.pressure_1],dp_above_p1/dp_below_p0,10)[2]
-        eos_array_match=[]
-        cs2_array_match=[]
-        for p_i in p_array_match:
-            eos_array_match.append([self.baryon_density_0*self.baryon_ratio(np.log(p_i/self.pressure_0),self.gammas),
-                                  self.density(np.log(p_i/self.pressure_0)),
-                                  p_i])
-            cs2_array_match.append(self.cs2(np.log(p_i/self.pressure_0)))
-        eos_array_match=np.array(eos_array_match).transpose()
-        self.causal_match=np.array(cs2_array_match).max()<=1
-        self.eos_array=np.concatenate((eos_array_low,eos_array_match[:,:-1],eos_array_high),axis=1)
-        EOS_interpolation.__init__(self,self.baryon_density_0,self.eos_array)
+        if(self.success_match):
+            dp_below_p0 = eos_array_low[2,-1] - eos_array_low[2,-2]
+            dp_above_p1 = eos_array_high[2,1] - eos_array_high[2,0]
+            p_array_match=log_array([self.pressure_0,self.pressure_1],dp_above_p1/dp_below_p0,10)[2]
+            eos_array_match=[]
+            cs2_array_match=[]
+            for p_i in p_array_match:
+                eos_array_match.append([self.baryon_density_0*self.baryon_ratio(np.log(p_i/self.pressure_0),self.gammas),
+                                      self.density(np.log(p_i/self.pressure_0)),
+                                      p_i])
+                cs2_array_match.append(self.cs2(np.log(p_i/self.pressure_0)))
+            eos_array_match=np.array(eos_array_match).transpose()
+            self.causal_match=np.array(cs2_array_match).max()<=1
+            self.eos_array=np.concatenate((eos_array_low,eos_array_match[:,:-1],eos_array_high),axis=1)
+            #EOS_interpolation.__init__(self,self.baryon_density_0,self.eos_array)
+        else:
+            self.causal_match=False
+            self.eos_array=np.concatenate((eos_array_low,eos_array_high),axis=1)
+            #EOS_interpolation.__init__(self,self.baryon_density_0,eos_array_low)
+        EOS_interpolation.__init__(self,self.baryon_density_0,self.eos_array,s_k=s_k)
     def __getstate__(self):
         return EOS_interpolation.__getstate__(self)
     def __setstate__(self, state):
